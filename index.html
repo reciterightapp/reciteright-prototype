@@ -232,7 +232,10 @@
 
   // The vowel marks of a word, in order, so two words can be compared on their vowels
   function vowelSig(text) {
-    return Array.from(text).filter(ch => MARKS.test(ch)).join("");
+    // Hamzat al-wasl (ٱ) and an alef at the start of a word are silent in the middle
+    // of a verse, so any vowel mark written on them is ignored
+    const stripped = text.replace(/^([ٱاأإآ])[ً-ٰٟ]+/, "$1");
+    return Array.from(stripped).filter(ch => MARKS.test(ch)).join("");
   }
 
   function loadAyah() {
