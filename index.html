@@ -1,0 +1,368 @@
+<!-- Layout: one phone-width column. Verse card on top, live reciting controls, then a results list. -->
+<title>ReciteRight Quran Reader</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  @import url("https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Nunito:wght@400;600;800&display=swap");
+
+  :root {
+    --bg: #f5f3ee;
+    --surface: #ffffff;
+    --ink: #1c2633;
+    --muted: #6b7682;
+    --accent: #2f7a6b;
+    --ok: #2f8f5b;
+    --bad: #c8553d;
+    --gold: #e0a33a;
+    --line: #e4e0d6;
+    --font-arabic: "Amiri", "Traditional Arabic", serif;
+    --font-ui: "Nunito", system-ui, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1a22;
+      --surface: #172631;
+      --ink: #eef3f6;
+      --muted: #9aa8b4;
+      --accent: #6fcab5;
+      --ok: #5fd39a;
+      --bad: #ff8a72;
+      --gold: #f2bd5a;
+      --line: #263a48;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1a22;
+    --surface: #172631;
+    --ink: #eef3f6;
+    --muted: #9aa8b4;
+    --accent: #6fcab5;
+    --ok: #5fd39a;
+    --bad: #ff8a72;
+    --gold: #f2bd5a;
+    --line: #263a48;
+    color-scheme: dark;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    padding-block: 16px 32px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    max-width: 520px;
+    margin-inline: auto;
+  }
+
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  h1 { font-size: 18px; margin: 0; font-weight: 800; }
+  .pill { font-size: 13px; color: var(--muted); }
+
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 18px;
+    margin-top: 14px;
+  }
+
+  .ayah-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .ayah-label { font-size: 14px; font-weight: 600; color: var(--muted); }
+  button {
+    font: inherit;
+    font-weight: 700;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink);
+    padding: 10px 16px;
+    cursor: pointer;
+  }
+  button:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+  button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  button:disabled { opacity: 0.45; cursor: default; }
+
+  .verse {
+    font-family: var(--font-arabic);
+    font-size: 30px;
+    line-height: 2.3;
+    text-align: right;
+    direction: rtl;
+    margin: 14px 0 6px;
+    min-height: 120px;
+  }
+  .word { padding: 2px 4px; border-radius: 8px; transition: background 0.2s, color 0.2s; }
+  .word.ok { color: var(--ok); }
+  .word.bad { color: var(--bad); text-decoration: underline wavy var(--bad); }
+  .word.skip { color: var(--muted); text-decoration: line-through; opacity: 0.7; }
+  .word.current { background: color-mix(in srgb, var(--gold) 28%, transparent); }
+
+  .status { font-size: 14px; color: var(--muted); min-height: 20px; }
+  .controls { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
+
+  .score { display: flex; align-items: baseline; gap: 10px; margin-top: 14px; }
+  .score strong { font-size: 40px; font-variant-numeric: tabular-nums; }
+
+  .mistake { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+  .mistake-head { display: flex; justify-content: space-between; align-items: center; font-size: 14px; font-weight: 700; }
+  .tag { font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; color: var(--muted); }
+  .pair { display: grid; grid-template-columns: 70px 1fr; gap: 6px 12px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .pair .word-cell { font-family: var(--font-arabic); font-size: 22px; direction: rtl; text-align: right; color: var(--ink); min-width: 0; }
+  .pair .expected { color: var(--ok); }
+  .pair .recited { color: var(--bad); }
+
+  .empty { color: var(--muted); font-size: 14px; }
+  .unsupported { color: var(--bad); font-size: 14px; }
+</style>
+
+<header>
+  <h1>Read from Quran</h1>
+  <span class="pill" id="surahLabel">Al-Fatiha</span>
+</header>
+
+<section class="card" aria-label="Verse">
+  <div class="ayah-nav">
+    <button id="prevBtn">Previous</button>
+    <span class="ayah-label" id="ayahLabel">Ayah 1 of 7</span>
+    <button id="nextBtn">Next</button>
+  </div>
+
+  <div class="verse" id="verse" lang="ar" dir="rtl"></div>
+
+  <div class="status" id="status">Tap "Start reciting" and read the verse aloud.</div>
+
+  <div class="controls">
+    <button class="primary" id="recBtn">Start reciting</button>
+    <button id="resetBtn">Reset</button>
+  </div>
+  <p class="unsupported" id="unsupported" hidden>
+    This browser can't listen for speech. Open the page in Chrome on Android or on a desktop.
+  </p>
+</section>
+
+<section class="card" aria-label="Results">
+  <div class="score">
+    <strong id="percent">0%</strong>
+    <span class="pill" id="countLabel">0 of 0 words correct</span>
+  </div>
+  <div id="mistakes">
+    <p class="empty" id="emptyMsg">Mistakes will appear here.</p>
+  </div>
+</section>
+
+<script>
+  const SURAH = "Al-Fatiha";
+  const AYAHS = [
+    "بِسْمِ ٱللَّهِ ٱلرَّحْمَٰنِ ٱلرَّحِيمِ",
+    "ٱلْحَمْدُ لِلَّهِ رَبِّ ٱلْعَٰلَمِينَ",
+    "ٱلرَّحْمَٰنِ ٱلرَّحِيمِ",
+    "مَٰلِكِ يَوْمِ ٱلدِّينِ",
+    "إِيَّاكَ نَعْبُدُ وَإِيَّاكَ نَسْتَعِينُ",
+    "ٱهْدِنَا ٱلصِّرَٰطَ ٱلْمُسْتَقِيمَ",
+    "صِرَٰطَ ٱلَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ ٱلْمَغْضُوبِ عَلَيْهِمْ وَلَا ٱلضَّآلِّينَ"
+  ];
+
+  let ayahIndex = 0;
+  let words = [];       // reference words for the current ayah
+  let state = [];       // per word: "pending" | "ok" | "bad"
+  let recited = [];     // what the child said for a "bad" word
+  let pointer = 0;      // index of the word the child should say next
+  let recognizer = null;
+  let listening = false;
+
+  const verseEl = document.getElementById("verse");
+  const statusEl = document.getElementById("status");
+  const recBtn = document.getElementById("recBtn");
+  const mistakesEl = document.getElementById("mistakes");
+  const percentEl = document.getElementById("percent");
+  const countEl = document.getElementById("countLabel");
+  const ayahLabel = document.getElementById("ayahLabel");
+  const prevBtn = document.getElementById("prevBtn");
+  const nextBtn = document.getElementById("nextBtn");
+
+  // Strip vowel marks and normalise letters so spoken and written forms compare fairly
+  function normalise(text) {
+    return text
+      .replace(/[ً-ٰٟۖ-ۭ]/g, "")
+      .replace(/[ٱأإآ]/g, "ا")
+      .replace(/ى/g, "ي")
+      .replace(/ة/g, "ه")
+      .trim();
+  }
+
+  function loadAyah() {
+    words = AYAHS[ayahIndex].split(/\s+/);
+    state = words.map(() => "pending");
+    recited = words.map(() => "");
+    pointer = 0;
+    verseEl.innerHTML = "";
+    words.forEach((w, i) => {
+      const span = document.createElement("span");
+      span.className = "word";
+      span.textContent = w + " ";
+      span.dataset.index = i;
+      verseEl.appendChild(span);
+    });
+    ayahLabel.textContent = `Ayah ${ayahIndex + 1} of ${AYAHS.length}`;
+    prevBtn.disabled = ayahIndex === 0;
+    nextBtn.disabled = ayahIndex === AYAHS.length - 1;
+    renderMistakes();
+    renderVerse();
+  }
+
+  function renderVerse() {
+    const spans = verseEl.querySelectorAll(".word");
+    spans.forEach((span, i) => {
+      span.classList.remove("ok", "bad", "skip", "current");
+      if (state[i] === "ok") span.classList.add("ok");
+      if (state[i] === "bad") span.classList.add("bad");
+      if (state[i] === "skip") span.classList.add("skip");
+      if (i === pointer && pointer < words.length) span.classList.add("current");
+    });
+  }
+
+  // Compare one spoken word with the words the child should say next.
+  // If the word matches one or two words ahead, the words in between were skipped.
+  // If it matches nothing nearby, it counts as a wrong word at the current position.
+  function judge(spoken) {
+    if (pointer >= words.length) return;
+    const heard = normalise(spoken);
+
+    for (let ahead = 0; ahead <= 2 && pointer + ahead < words.length; ahead++) {
+      if (normalise(words[pointer + ahead]) === heard) {
+        for (let k = 0; k < ahead; k++) {
+          state[pointer + k] = "skip";
+        }
+        state[pointer + ahead] = "ok";
+        pointer += ahead + 1;
+        afterJudge();
+        return;
+      }
+    }
+
+    state[pointer] = "bad";
+    recited[pointer] = spoken;
+    pointer++;
+    afterJudge();
+  }
+
+  function afterJudge() {
+    renderVerse();
+    renderMistakes();
+    checkFinished();
+  }
+
+  function checkFinished() {
+    if (pointer >= words.length) {
+      statusEl.textContent = ayahIndex < AYAHS.length - 1
+        ? "Ayah finished. Tap Next to continue."
+        : "Surah finished. Well done.";
+      stopListening();
+    }
+  }
+
+  function renderMistakes() {
+    const ok = state.filter(s => s === "ok").length;
+    const total = words.length;
+    const pct = total ? Math.round((ok / total) * 100) : 0;
+    percentEl.textContent = pct + "%";
+    countEl.textContent = `${ok} of ${total} words correct`;
+
+    mistakesEl.innerHTML = "";
+    const bad = state.map((s, i) => (s === "bad" || s === "skip" ? i : -1)).filter(i => i >= 0);
+    if (bad.length === 0) {
+      const p = document.createElement("p");
+      p.className = "empty";
+      p.textContent = "Mistakes will appear here.";
+      mistakesEl.appendChild(p);
+      return;
+    }
+    bad.forEach(i => {
+      const skipped = state[i] === "skip";
+      const wrap = document.createElement("div");
+      wrap.className = "mistake";
+      wrap.innerHTML = `
+        <div class="mistake-head">
+          <span>${skipped ? "Skipped word" : "Incorrect word"}</span>
+          <span class="tag">${ayahIndex + 1}:${i + 1}</span>
+        </div>
+        <div class="pair">
+          <span>Expected</span><span class="word-cell expected"></span>
+          <span>Recited</span><span class="word-cell recited"></span>
+        </div>`;
+      wrap.querySelector(".expected").textContent = words[i];
+      wrap.querySelector(".recited").textContent = skipped ? "not said" : recited[i];
+      mistakesEl.appendChild(wrap);
+    });
+  }
+
+  function startListening() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      document.getElementById("unsupported").hidden = false;
+      return;
+    }
+    recognizer = new SR();
+    recognizer.lang = "ar-SA";
+    recognizer.continuous = true;
+    recognizer.interimResults = true;
+
+    // Live results grow as the child speaks, so track how many words of the
+    // current result have already been judged, and only judge the new ones.
+    let currentIdx = -1;
+    let processed = 0;
+
+    recognizer.onresult = (event) => {
+      const idx = event.results.length - 1;
+      if (idx !== currentIdx) {
+        currentIdx = idx;
+        processed = 0;
+      }
+      const result = event.results[idx];
+      const heard = result[0].transcript.trim().split(/\s+/).filter(Boolean);
+      for (let i = processed; i < heard.length; i++) {
+        judge(heard[i]);
+      }
+      processed = heard.length;
+    };
+    recognizer.onerror = () => {
+      statusEl.textContent = "Couldn't hear that. Check the microphone and try again.";
+      stopListening();
+    };
+    recognizer.onend = () => {
+      if (listening && pointer < words.length) recognizer.start();
+    };
+
+    listening = true;
+    recBtn.textContent = "Stop";
+    statusEl.textContent = "Listening. Read the highlighted word.";
+    recognizer.start();
+  }
+
+  function stopListening() {
+    listening = false;
+    recBtn.textContent = "Start reciting";
+    if (recognizer) recognizer.stop();
+  }
+
+  recBtn.addEventListener("click", () => {
+    if (listening) stopListening();
+    else if (pointer >= words.length) statusEl.textContent = "Tap Reset to read this ayah again.";
+    else startListening();
+  });
+
+  document.getElementById("resetBtn").addEventListener("click", () => {
+    stopListening();
+    loadAyah();
+    statusEl.textContent = 'Tap "Start reciting" and read the verse aloud.';
+  });
+
+  prevBtn.addEventListener("click", () => { stopListening(); ayahIndex--; loadAyah(); });
+  nextBtn.addEventListener("click", () => { stopListening(); ayahIndex++; loadAyah(); });
+
+  document.getElementById("surahLabel").textContent = SURAH;
+  loadAyah();
+</script>
