@@ -235,7 +235,9 @@
     // Hamzat al-wasl (ٱ) and an alef at the start of a word are silent in the middle
     // of a verse, so any vowel mark written on them is ignored
     const stripped = text.replace(/^([ٱاأإآ])[ً-ٰٟ]+/, "$1");
-    return Array.from(stripped).filter(ch => MARKS.test(ch)).join("");
+    // Only the short vowels count here (fatha, kasra, damma, tanween).
+    // Shadda and sukun are not vowels, and the model writes them inconsistently.
+    return Array.from(stripped).filter(ch => /[ً-ِ]/.test(ch)).join("");
   }
 
   function loadAyah() {
