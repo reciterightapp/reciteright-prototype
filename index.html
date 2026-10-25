@@ -160,6 +160,7 @@
 
   <div class="controls">
     <button class="primary" id="recBtn">Start reciting</button>
+    <button id="wholeBtn">Record whole verse</button>
     <button id="resetBtn">Reset</button>
   </div>
 </section>
@@ -416,6 +417,41 @@
       releaseMicrophone();
     }
   }
+
+  // One long take: nothing is cut, and the whole recording is sent once when you stop
+  async function startWhole() {
+    const url = serverInput.value.trim().replace(/\/+$/, "");
+    if (!url) {
+      statusEl.textContent = "Paste the server address from the Colab notebook first.";
+      return;
+    }
+    try { localStorage.setItem("reciteServer", url); } catch (e) {}
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      statusEl.textContent = "Microphone access was blocked. Allow it and try again.";
+      return;
+    }
+    const sess = session;
+    const chunks = [];
+    cycling = true;
+    recBtn.textContent = "Stop";
+    statusEl.textContent = "Recording the whole verse. Tap Stop when you finish.";
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      releaseMicrophone();
+      if (blob.size) enqueue(() => sendClip(url, blob, sess));
+    };
+    recorder.start();
+  }
+
+  document.getElementById("wholeBtn").addEventListener("click", () => {
+    if (cycling) stopListening();
+    else startWhole();
+  });
 
   recBtn.addEventListener("click", () => {
     if (cycling) stopListening();
