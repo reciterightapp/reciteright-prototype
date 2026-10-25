@@ -1,4 +1,4 @@
-<!-- Layout: one phone-width column. Verse card on top, live reciting controls, then a results list. -->
+<!-- Layout: one phone-width column. Server address, verse card, then results. -->
 <title>ReciteRight Quran Reader</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
@@ -12,6 +12,7 @@
     --accent: #2f7a6b;
     --ok: #2f8f5b;
     --bad: #c8553d;
+    --vowel: #b7791f;
     --gold: #e0a33a;
     --line: #e4e0d6;
     --font-arabic: "Amiri", "Traditional Arabic", serif;
@@ -27,6 +28,7 @@
       --accent: #6fcab5;
       --ok: #5fd39a;
       --bad: #ff8a72;
+      --vowel: #f2bd5a;
       --gold: #f2bd5a;
       --line: #263a48;
       color-scheme: dark;
@@ -40,6 +42,7 @@
     --accent: #6fcab5;
     --ok: #5fd39a;
     --bad: #ff8a72;
+    --vowel: #f2bd5a;
     --gold: #f2bd5a;
     --line: #263a48;
     color-scheme: dark;
@@ -69,6 +72,20 @@
     margin-top: 14px;
   }
 
+  .server label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  .server input {
+    font: inherit;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--ink);
+  }
+  .server .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
   .ayah-nav { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .ayah-label { font-size: 14px; font-weight: 600; color: var(--muted); }
   button {
@@ -97,6 +114,7 @@
   .word { padding: 2px 4px; border-radius: 8px; transition: background 0.2s, color 0.2s; }
   .word.ok { color: var(--ok); }
   .word.bad { color: var(--bad); text-decoration: underline wavy var(--bad); }
+  .word.vowel { color: var(--vowel); text-decoration: underline dotted var(--vowel); }
   .word.skip { color: var(--muted); text-decoration: line-through; opacity: 0.7; }
   .word.current { background: color-mix(in srgb, var(--gold) 28%, transparent); }
 
@@ -113,15 +131,21 @@
   .pair .word-cell { font-family: var(--font-arabic); font-size: 22px; direction: rtl; text-align: right; color: var(--ink); min-width: 0; }
   .pair .expected { color: var(--ok); }
   .pair .recited { color: var(--bad); }
+  .mistake.vowel-mistake .recited { color: var(--vowel); }
 
   .empty { color: var(--muted); font-size: 14px; }
-  .unsupported { color: var(--bad); font-size: 14px; }
 </style>
 
 <header>
   <h1>Read from Quran</h1>
   <span class="pill" id="surahLabel">Al-Fatiha</span>
 </header>
+
+<section class="card server" aria-label="Server">
+  <label for="serverUrl">Model server address</label>
+  <input id="serverUrl" type="url" placeholder="https://....trycloudflare.com" autocomplete="off">
+  <p class="hint">Paste the address the Colab notebook prints. It changes each time the notebook restarts.</p>
+</section>
 
 <section class="card" aria-label="Verse">
   <div class="ayah-nav">
@@ -132,15 +156,12 @@
 
   <div class="verse" id="verse" lang="ar" dir="rtl"></div>
 
-  <div class="status" id="status">Tap "Start reciting" and read the verse aloud.</div>
+  <div class="status" id="status">Paste the server address, then tap "Start reciting".</div>
 
   <div class="controls">
     <button class="primary" id="recBtn">Start reciting</button>
     <button id="resetBtn">Reset</button>
   </div>
-  <p class="unsupported" id="unsupported" hidden>
-    This browser can't listen for speech. Open the page in Chrome on Android or on a desktop.
-  </p>
 </section>
 
 <section class="card" aria-label="Results">
@@ -149,7 +170,7 @@
     <span class="pill" id="countLabel">0 of 0 words correct</span>
   </div>
   <div id="mistakes">
-    <p class="empty" id="emptyMsg">Mistakes will appear here.</p>
+    <p class="empty">Mistakes will appear here.</p>
   </div>
 </section>
 
@@ -165,13 +186,19 @@
     "صِرَٰطَ ٱلَّذِينَ أَنْعَمْتَ عَلَيْهِمْ غَيْرِ ٱلْمَغْضُوبِ عَلَيْهِمْ وَلَا ٱلضَّآلِّينَ"
   ];
 
+  const CLIP_MS = 2500;          // length of each recording sent to the server
+  const MARKS = /[ً-ٰٟۖ-ۭ]/;
+
   let ayahIndex = 0;
   let words = [];       // reference words for the current ayah
-  let state = [];       // per word: "pending" | "ok" | "bad"
-  let recited = [];     // what the child said for a "bad" word
+  let state = [];       // per word: "pending" | "ok" | "bad" | "skip" | "vowel"
+  let recited = [];     // what the child said for a wrong or wrong-vowel word
   let pointer = 0;      // index of the word the child should say next
-  let recognizer = null;
-  let listening = false;
+  let session = 0;      // bumps on every ayah change, so old clips are ignored
+  let cycling = false;
+  let stream = null;
+  let recorder = null;
+  let queue = Promise.resolve();
 
   const verseEl = document.getElementById("verse");
   const statusEl = document.getElementById("status");
@@ -182,8 +209,17 @@
   const ayahLabel = document.getElementById("ayahLabel");
   const prevBtn = document.getElementById("prevBtn");
   const nextBtn = document.getElementById("nextBtn");
+  const serverInput = document.getElementById("serverUrl");
 
-  // Strip vowel marks and normalise letters so spoken and written forms compare fairly
+  // Remember the server address for this viewer (optional, so wrapped in try/catch)
+  try {
+    serverInput.value = localStorage.getItem("reciteServer") || "";
+  } catch (e) { /* storage unavailable: the box just starts empty */ }
+  serverInput.addEventListener("change", () => {
+    try { localStorage.setItem("reciteServer", serverInput.value.trim()); } catch (e) {}
+  });
+
+  // Letters only: strip vowel marks and normalise letter forms
   function normalise(text) {
     return text
       .replace(/[ً-ٰٟۖ-ۭ]/g, "")
@@ -193,7 +229,13 @@
       .trim();
   }
 
+  // The vowel marks of a word, in order, so two words can be compared on their vowels
+  function vowelSig(text) {
+    return Array.from(text).filter(ch => MARKS.test(ch)).join("");
+  }
+
   function loadAyah() {
+    session++;
     words = AYAHS[ayahIndex].split(/\s+/);
     state = words.map(() => "pending");
     recited = words.map(() => "");
@@ -203,43 +245,42 @@
       const span = document.createElement("span");
       span.className = "word";
       span.textContent = w + " ";
-      span.dataset.index = i;
       verseEl.appendChild(span);
     });
     ayahLabel.textContent = `Ayah ${ayahIndex + 1} of ${AYAHS.length}`;
     prevBtn.disabled = ayahIndex === 0;
     nextBtn.disabled = ayahIndex === AYAHS.length - 1;
-    renderMistakes();
     renderVerse();
+    renderMistakes();
   }
 
   function renderVerse() {
-    const spans = verseEl.querySelectorAll(".word");
-    spans.forEach((span, i) => {
-      span.classList.remove("ok", "bad", "skip", "current");
-      if (state[i] === "ok") span.classList.add("ok");
-      if (state[i] === "bad") span.classList.add("bad");
-      if (state[i] === "skip") span.classList.add("skip");
+    verseEl.querySelectorAll(".word").forEach((span, i) => {
+      span.classList.remove("ok", "bad", "vowel", "skip", "current");
+      if (state[i] !== "pending") span.classList.add(state[i]);
       if (i === pointer && pointer < words.length) span.classList.add("current");
     });
   }
 
-  // Compare one spoken word with the words the child should say next.
-  // If the word matches one or two words ahead, the words in between were skipped.
-  // If it matches nothing nearby, it counts as a wrong word at the current position.
+  // Judge one spoken word against the words the child should say next.
+  // Letters must match. If they do, the vowel marks are compared too.
+  // A match one or two words ahead means the words in between were skipped.
   function judge(spoken) {
     if (pointer >= words.length) return;
-    const heard = normalise(spoken);
+    const heardLetters = normalise(spoken);
 
     for (let ahead = 0; ahead <= 2 && pointer + ahead < words.length; ahead++) {
-      if (normalise(words[pointer + ahead]) === heard) {
-        for (let k = 0; k < ahead; k++) {
-          state[pointer + k] = "skip";
-        }
-        state[pointer + ahead] = "ok";
-        pointer += ahead + 1;
-        afterJudge();
-        return;
+      const target = words[pointer + ahead];
+      if (normalise(target) === heardLetters) {
+        for (let k = 0; k < ahead; k++) state[pointer + k] = "skip";
+        const idx = pointer + ahead;
+        // Only check vowels if the server actually returned vowel marks
+        const hasMarks = MARKS.test(spoken);
+        const vowelsOk = !hasMarks || vowelSig(target) === vowelSig(spoken);
+        state[idx] = vowelsOk ? "ok" : "vowel";
+        recited[idx] = spoken;
+        pointer = idx + 1;
+        return afterJudge();
       }
     }
 
@@ -252,10 +293,6 @@
   function afterJudge() {
     renderVerse();
     renderMistakes();
-    checkFinished();
-  }
-
-  function checkFinished() {
     if (pointer >= words.length) {
       statusEl.textContent = ayahIndex < AYAHS.length - 1
         ? "Ayah finished. Tap Next to continue."
@@ -272,21 +309,28 @@
     countEl.textContent = `${ok} of ${total} words correct`;
 
     mistakesEl.innerHTML = "";
-    const bad = state.map((s, i) => (s === "bad" || s === "skip" ? i : -1)).filter(i => i >= 0);
-    if (bad.length === 0) {
+    const flagged = state
+      .map((s, i) => (s === "bad" || s === "skip" || s === "vowel" ? i : -1))
+      .filter(i => i >= 0);
+
+    if (flagged.length === 0) {
       const p = document.createElement("p");
       p.className = "empty";
       p.textContent = "Mistakes will appear here.";
       mistakesEl.appendChild(p);
       return;
     }
-    bad.forEach(i => {
-      const skipped = state[i] === "skip";
+
+    flagged.forEach(i => {
+      const kind = state[i];
+      const label = kind === "skip" ? "Skipped word"
+        : kind === "vowel" ? "Wrong vowel"
+        : "Incorrect word";
       const wrap = document.createElement("div");
-      wrap.className = "mistake";
+      wrap.className = "mistake" + (kind === "vowel" ? " vowel-mistake" : "");
       wrap.innerHTML = `
         <div class="mistake-head">
-          <span>${skipped ? "Skipped word" : "Incorrect word"}</span>
+          <span>${label}</span>
           <span class="tag">${ayahIndex + 1}:${i + 1}</span>
         </div>
         <div class="pair">
@@ -294,62 +338,87 @@
           <span>Recited</span><span class="word-cell recited"></span>
         </div>`;
       wrap.querySelector(".expected").textContent = words[i];
-      wrap.querySelector(".recited").textContent = skipped ? "not said" : recited[i];
+      wrap.querySelector(".recited").textContent = kind === "skip" ? "not said" : recited[i];
       mistakesEl.appendChild(wrap);
     });
   }
 
-  function startListening() {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) {
-      document.getElementById("unsupported").hidden = false;
+  // Clips are sent one at a time, in the order they were recorded
+  function enqueue(task) {
+    queue = queue.then(task).catch(() => {
+      statusEl.textContent = "Couldn't reach the server. Check the address and that the Colab notebook is running.";
+    });
+  }
+
+  async function sendClip(url, blob, sess) {
+    if (sess !== session) return;          // the ayah changed while this clip was recording
+    const form = new FormData();
+    form.append("audio", blob, "clip.webm");
+    const res = await fetch(url + "/transcribe", { method: "POST", body: form });
+    if (!res.ok) throw new Error("server " + res.status);
+    const data = await res.json();
+    if (sess !== session) return;
+    (data.text || "").trim().split(/\s+/).filter(Boolean).forEach(judge);
+  }
+
+  // Record one short clip, then start the next straight away
+  function recordCycle(url) {
+    if (!cycling || !stream) return;
+    const sess = session;
+    const chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+      if (cycling) recordCycle(url);
+      else releaseMicrophone();
+      if (blob.size) enqueue(() => sendClip(url, blob, sess));
+    };
+    recorder.start();
+    setTimeout(() => {
+      if (recorder && recorder.state === "recording") recorder.stop();
+    }, CLIP_MS);
+  }
+
+  async function startListening() {
+    const url = serverInput.value.trim().replace(/\/+$/, "");
+    if (!url) {
+      statusEl.textContent = "Paste the server address from the Colab notebook first.";
       return;
     }
-    recognizer = new SR();
-    recognizer.lang = "ar-SA";
-    recognizer.continuous = true;
-    recognizer.interimResults = true;
+    try { localStorage.setItem("reciteServer", url); } catch (e) {}
 
-    // Live results grow as the child speaks, so track how many words of the
-    // current result have already been judged, and only judge the new ones.
-    let currentIdx = -1;
-    let processed = 0;
-
-    recognizer.onresult = (event) => {
-      const idx = event.results.length - 1;
-      if (idx !== currentIdx) {
-        currentIdx = idx;
-        processed = 0;
-      }
-      const result = event.results[idx];
-      const heard = result[0].transcript.trim().split(/\s+/).filter(Boolean);
-      for (let i = processed; i < heard.length; i++) {
-        judge(heard[i]);
-      }
-      processed = heard.length;
-    };
-    recognizer.onerror = () => {
-      statusEl.textContent = "Couldn't hear that. Check the microphone and try again.";
-      stopListening();
-    };
-    recognizer.onend = () => {
-      if (listening && pointer < words.length) recognizer.start();
-    };
-
-    listening = true;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (e) {
+      statusEl.textContent = "Microphone access was blocked. Allow it and try again.";
+      return;
+    }
+    cycling = true;
     recBtn.textContent = "Stop";
-    statusEl.textContent = "Listening. Read the highlighted word.";
-    recognizer.start();
+    statusEl.textContent = "Listening. Read the verse aloud.";
+    recordCycle(url);
+  }
+
+  function releaseMicrophone() {
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
   }
 
   function stopListening() {
-    listening = false;
+    cycling = false;
     recBtn.textContent = "Start reciting";
-    if (recognizer) recognizer.stop();
+    if (recorder && recorder.state === "recording") {
+      recorder.stop();               // its onstop sends the last clip and releases the microphone
+    } else {
+      releaseMicrophone();
+    }
   }
 
   recBtn.addEventListener("click", () => {
-    if (listening) stopListening();
+    if (cycling) stopListening();
     else if (pointer >= words.length) statusEl.textContent = "Tap Reset to read this ayah again.";
     else startListening();
   });
@@ -357,7 +426,7 @@
   document.getElementById("resetBtn").addEventListener("click", () => {
     stopListening();
     loadAyah();
-    statusEl.textContent = 'Tap "Start reciting" and read the verse aloud.';
+    statusEl.textContent = "Paste the server address, then tap \"Start reciting\".";
   });
 
   prevBtn.addEventListener("click", () => { stopListening(); ayahIndex--; loadAyah(); });
