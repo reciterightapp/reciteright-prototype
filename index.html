@@ -134,6 +134,7 @@
   .mistake.vowel-mistake .recited { color: var(--vowel); }
 
   .empty { color: var(--muted); font-size: 14px; }
+  .summary { font-size: 14px; font-weight: 700; color: var(--muted); margin: 14px 0 0; }
 </style>
 
 <header>
@@ -170,6 +171,7 @@
     <strong id="percent">0%</strong>
     <span class="pill" id="countLabel">0 of 0 words correct</span>
   </div>
+  <p class="summary" id="summary">Mistakes will appear here.</p>
   <div id="mistakes">
     <p class="empty">Mistakes will appear here.</p>
   </div>
@@ -205,6 +207,7 @@
   const statusEl = document.getElementById("status");
   const recBtn = document.getElementById("recBtn");
   const mistakesEl = document.getElementById("mistakes");
+  const summaryEl = document.getElementById("summary");
   const percentEl = document.getElementById("percent");
   const countEl = document.getElementById("countLabel");
   const ayahLabel = document.getElementById("ayahLabel");
@@ -320,12 +323,20 @@
       .filter(i => i >= 0);
 
     if (flagged.length === 0) {
-      const p = document.createElement("p");
-      p.className = "empty";
-      p.textContent = "Mistakes will appear here.";
-      mistakesEl.appendChild(p);
+      summaryEl.textContent = pointer >= words.length
+        ? "No mistakes. Every word was correct."
+        : "Mistakes will appear here.";
       return;
     }
+
+    const nBad = state.filter(s => s === "bad").length;
+    const nVowel = state.filter(s => s === "vowel").length;
+    const nSkip = state.filter(s => s === "skip").length;
+    const parts = [];
+    if (nBad) parts.push(`${nBad} wrong word${nBad > 1 ? "s" : ""}`);
+    if (nVowel) parts.push(`${nVowel} wrong vowel${nVowel > 1 ? "s" : ""}`);
+    if (nSkip) parts.push(`${nSkip} skipped`);
+    summaryEl.textContent = parts.join(" · ");
 
     flagged.forEach(i => {
       const kind = state[i];
@@ -358,13 +369,23 @@
 
   async function sendClip(url, blob, sess) {
     if (sess !== session) return;          // the ayah changed while this clip was recording
+    const wholeMode = !cycling;            // recording has already stopped
+    if (wholeMode) statusEl.textContent = "Checking with the model…";
     const form = new FormData();
     form.append("audio", blob, "clip.webm");
     const res = await fetch(url + "/transcribe", { method: "POST", body: form });
     if (!res.ok) throw new Error("server " + res.status);
     const data = await res.json();
     if (sess !== session) return;
-    (data.text || "").trim().split(/\s+/).filter(Boolean).forEach(judge);
+    const heard = (data.text || "").trim().split(/\s+/).filter(Boolean);
+    if (wholeMode && heard.length === 0) {
+      statusEl.textContent = "Didn't catch any words. Try again, a little closer to the phone.";
+      return;
+    }
+    heard.forEach(judge);
+    if (wholeMode && pointer < words.length) {
+      statusEl.textContent = "Checked. Review the results below.";
+    }
   }
 
   // Record one short clip, then start the next straight away
