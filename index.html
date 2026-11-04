@@ -226,7 +226,8 @@
   // Letters only: strip vowel marks and normalise letter forms
   function normalise(text) {
     return text
-      .replace(/[ً-ٰٟۖ-ۭ]/g, "")
+      .replace(/\u0670/g, "\u0627")  // dagger alif -> full alif, before the marks are stripped
+      .replace(/[ً-ٰٟۖ-ۭ]/g, "")
       .replace(/[ٱأإآ]/g, "ا")
       .replace(/ى/g, "ي")
       .replace(/ة/g, "ه")
