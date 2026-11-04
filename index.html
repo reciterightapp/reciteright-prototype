@@ -223,15 +223,18 @@
     try { localStorage.setItem("reciteServer", serverInput.value.trim()); } catch (e) {}
   });
 
-  // Letters only: strip vowel marks and normalise letter forms
+  // Letters only: strip vowel marks and normalise letter forms.
+  // Alifs after the first letter are ignored, because the model writes the
+  // long "a" (standing fatha) inconsistently.
   function normalise(text) {
-    return text
-      .replace(/\u0670/g, "\u0627")  // dagger alif -> full alif, before the marks are stripped
+    const base = text
+      .replace(/\u0670/g, "\u0627")  // dagger alif -> full alif
       .replace(/[ً-ٰٟۖ-ۭ]/g, "")
       .replace(/[ٱأإآ]/g, "ا")
       .replace(/ى/g, "ي")
       .replace(/ة/g, "ه")
       .trim();
+    return base.slice(0, 1) + base.slice(1).replace(/ا/g, "");
   }
 
   // The vowel marks of a word, in order, so two words can be compared on their vowels
